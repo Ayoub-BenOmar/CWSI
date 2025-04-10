@@ -4,64 +4,232 @@
   <meta charset="UTF-8">
   <title>CWSI Calculator from TIFF Image</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tiff.js/2.0.0/tiff.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+    .container { display: flex; flex-direction: column; gap: 20px; }
+    .canvas-container { display: flex; gap: 20px; flex-wrap: wrap; }
+    canvas { border: 1px solid #ccc; }
+    .controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+    .result { margin-top: 20px; }
+    label { font-weight: bold; }
+    button { padding: 8px 16px; background: #4CAF50; color: white; border: none; cursor: pointer; }
+    button:hover { background: #45a049; }
+  </style>
 </head>
 <body>
-  <h2>hamza qawad</h2>
-  <input type="file" id="imageInput">
-  <canvas id="canvas" style="display:none;"></canvas>
+  <h1>CWSI Calculator from Thermal TIFF Image</h1>
+  
+  <div class="container">
+    <div class="controls">
+      <div>
+        <label for="imageInput">Upload Thermal TIFF Image:</label>
+        <input type="file" id="imageInput" accept=".tif,.tiff">
+      </div>
+      
+      <div>
+        <label for="tempScaleFactor">Temperature Scale Factor:</label>
+        <input type="number" id="tempScaleFactor" value="0.1" step="0.01">
+        <span>°C per digital unit</span>
+      </div>
+      
+      <div>
+        <label for="tempOffset">Temperature Offset:</label>
+        <input type="number" id="tempOffset" value="0" step="0.1">
+        <span>°C</span>
+      </div>
+      
+      <div>
+        <label for="minPercentile">Non-Water-Stressed Baseline Percentile:</label>
+        <input type="number" id="minPercentile" value="5" min="0" max="50">
+        <span>%</span>
+      </div>
+      
+      <div>
+        <label for="maxPercentile">Dry Reference Percentile:</label>
+        <input type="number" id="maxPercentile" value="95" min="50" max="100">
+        <span>%</span>
+      </div>
+      
+      <button id="processButton">Process Image</button>
+    </div>
+    
+    <div class="canvas-container">
+      <div>
+        <h3>Original Thermal Image</h3>
+        <canvas id="originalCanvas"></canvas>
+      </div>
+      <div>
+        <h3>CWSI Map</h3>
+        <canvas id="cwsiCanvas"></canvas>
+      </div>
+    </div>
+    
+    <div class="result">
+      <h3>Results:</h3>
+      <div id="results"></div>
+    </div>
+  </div>
+
   <script>
-    document.getElementById("imageInput").addEventListener("change", function (event) {
+    // DOM elements
+    const imageInput = document.getElementById('imageInput');
+    const tempScaleFactor = document.getElementById('tempScaleFactor');
+    const tempOffset = document.getElementById('tempOffset');
+    const minPercentile = document.getElementById('minPercentile');
+    const maxPercentile = document.getElementById('maxPercentile');
+    const processButton = document.getElementById('processButton');
+    const originalCanvas = document.getElementById('originalCanvas');
+    const cwsiCanvas = document.getElementById('cwsiCanvas');
+    const resultsDiv = document.getElementById('results');
+    
+    // Event listeners
+    imageInput.addEventListener('change', loadImage);
+    processButton.addEventListener('click', processImage);
+    
+    let tiffImage = null;
+    let imageWidth = 0;
+    let imageHeight = 0;
+    
+    function loadImage(event) {
       const file = event.target.files[0];
       if (!file) return;
-
+      
       const reader = new FileReader();
       reader.onload = function(e) {
-        const tiff = new Tiff({buffer: e.target.result});
-        const image = tiff.toCanvas(); // Convert TIFF to canvas directly
-
-        const canvas = document.getElementById("canvas");
-        const ctx = canvas.getContext("2d");
-        canvas.width = image.width;
-        canvas.height = image.height;
-        ctx.drawImage(image, 0, 0);
-
-        const imageData = ctx.getImageData(0, 0, image.width, image.height);
-        const data = imageData.data;
-        let temps = [];
-
-        // Collect grayscale values (assuming thermal grayscale image)
-        for (let i = 0; i < data.length; i += 4) {
-          const gray = data[i]; // R=G=B=gray
-          const temp = gray * 0.1; // Example conversion: 1 unit = 0.1 °C
-          temps.push(temp);
+        try {
+          tiffImage = new Tiff({buffer: e.target.result});
+          imageWidth = tiffImage.width();
+          imageHeight = tiffImage.height();
+          
+          // Display original image
+          displayOriginalImage();
+          
+          // Enable processing
+          processButton.disabled = false;
+        } catch (error) {
+          resultsDiv.innerHTML = `<p style="color: red">Error loading TIFF: ${error.message}</p>`;
         }
-
-        // Estimate Tdry and Tnwl
-        temps.sort((a, b) => a - b);
-        const Tnwl = temps[Math.floor(temps.length * 0.02)];
-        const Tdry = temps[Math.floor(temps.length * 0.98)];
-
-        // Calculate CWSI for each pixel
-        for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-          const Tc = temps[j];
-          let cwsi = (Tc - Tnwl) / (Tdry - Tnwl);
-          cwsi = Math.max(0, Math.min(1, cwsi)); // clamp between 0 and 1
-
-          // Map CWSI to color (hot colormap style)
-          const color = Math.floor(255 * cwsi);
-          data[i] = color;     // R
-          data[i + 1] = 0;     // G
-          data[i + 2] = 255 - color; // B
-        }
-
-        // Draw result
-        ctx.putImageData(imageData, 0, 0);
-        canvas.style.display = "block";
-        document.body.appendChild(canvas);
+      };
+      
+      reader.onerror = function() {
+        resultsDiv.innerHTML = '<p style="color: red">Error reading the file.</p>';
       };
       
       reader.readAsArrayBuffer(file);
-    });
+    }
+    
+    function displayOriginalImage() {
+      const canvas = tiffImage.toCanvas();
+      originalCanvas.width = imageWidth;
+      originalCanvas.height = imageHeight;
+      const ctx = originalCanvas.getContext('2d');
+      ctx.drawImage(canvas, 0, 0);
+    }
+    
+    function processImage() {
+      if (!tiffImage) {
+        resultsDiv.innerHTML = '<p style="color: red">Please upload an image first.</p>';
+        return;
+      }
+      
+      try {
+        // Get parameters
+        const scaleFactor = parseFloat(tempScaleFactor.value);
+        const offset = parseFloat(tempOffset.value);
+        const minPct = parseFloat(minPercentile.value) / 100;
+        const maxPct = parseFloat(maxPercentile.value) / 100;
+        
+        // Read pixel data
+        const canvas = tiffImage.toCanvas();
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.getImageData(0, 0, imageWidth, imageHeight);
+        const data = imageData.data;
+        
+        // Extract temperatures
+        let temps = [];
+        for (let i = 0; i < data.length; i += 4) {
+          const gray = (data[i] + data[i+1] + data[i+2]) / 3; // Better grayscale calculation
+          const temp = gray * scaleFactor + offset;
+          temps.push(temp);
+        }
+        
+        // Calculate Tnwl and Tdry from percentiles
+        temps.sort((a, b) => a - b);
+        const Tnwl = temps[Math.floor(temps.length * minPct)];
+        const Tdry = temps[Math.floor(temps.length * maxPct)];
+        const tempRange = Tdry - Tnwl;
+        
+        if (tempRange <= 0) {
+          resultsDiv.innerHTML = '<p style="color: red">Error: The temperature range is zero or negative. Adjust your percentiles.</p>';
+          return;
+        }
+        
+        // Calculate CWSI and generate visualization
+        cwsiCanvas.width = imageWidth;
+        cwsiCanvas.height = imageHeight;
+        const cwsiCtx = cwsiCanvas.getContext('2d');
+        const cwsiData = cwsiCtx.createImageData(imageWidth, imageHeight);
+        
+        let sumCWSI = 0;
+        let minCWSI = 1;
+        let maxCWSI = 0;
+        
+        for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+          const gray = (data[i] + data[i+1] + data[i+2]) / 3;
+          const temp = gray * scaleFactor + offset;
+          let cwsi = (temp - Tnwl) / tempRange;
+          cwsi = Math.max(0, Math.min(1, cwsi)); // Clamp between 0 and 1
+          
+          // Update statistics
+          sumCWSI += cwsi;
+          minCWSI = Math.min(minCWSI, cwsi);
+          maxCWSI = Math.max(maxCWSI, cwsi);
+          
+          // Apply colormap (improved version)
+          let r, g, b;
+          if (cwsi < 0.33) {
+            // Blue to green (0-0.33)
+            const t = cwsi * 3;
+            r = 0;
+            g = Math.floor(255 * t);
+            b = Math.floor(255 * (1 - t));
+          } else if (cwsi < 0.66) {
+            // Green to yellow (0.33-0.66)
+            const t = (cwsi - 0.33) * 3;
+            r = Math.floor(255 * t);
+            g = 255;
+            b = 0;
+          } else {
+            // Yellow to red (0.66-1)
+            const t = (cwsi - 0.66) * 3;
+            r = 255;
+            g = Math.floor(255 * (1 - t));
+            b = 0;
+          }
+          
+          cwsiData.data[i] = r;
+          cwsiData.data[i + 1] = g;
+          cwsiData.data[i + 2] = b;
+          cwsiData.data[i + 3] = 255; // Alpha
+        }
+        
+        cwsiCtx.putImageData(cwsiData, 0, 0);
+        
+        // Display results
+        const avgCWSI = sumCWSI / (imageWidth * imageHeight);
+        resultsDiv.innerHTML = `
+          <p><strong>Non-Water-Stressed Baseline (Tnwl):</strong> ${Tnwl.toFixed(2)}°C</p>
+          <p><strong>Dry Reference (Tdry):</strong> ${Tdry.toFixed(2)}°C</p>
+          <p><strong>Temperature Range:</strong> ${tempRange.toFixed(2)}°C</p>
+          <p><strong>Average CWSI:</strong> ${avgCWSI.toFixed(3)}</p>
+          <p><strong>Min CWSI:</strong> ${minCWSI.toFixed(3)}</p>
+          <p><strong>Max CWSI:</strong> ${maxCWSI.toFixed(3)}</p>
+          <p>Color scale: Blue (0) → Green → Yellow → Red (1)</p>
+        `;
+      } catch (error) {
+        resultsDiv.innerHTML = `<p style="color: red">Error processing image: ${error.message}</p>`;
+      }
+    }
   </script>
 </body>
 </html>
