@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>CWSI Calculator from TIFF Image</title>
+  <title>CWSI Calculator from TIF Image</title>
+  <!-- Updated TIFF.js library link -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tiff.js/1.0.0/tiff.min.js"></script>
-  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/tiff.js/2.0.0/tiff.min.js"></script> -->
   <style>
     body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
     .container { display: flex; flex-direction: column; gap: 20px; }
@@ -15,16 +15,18 @@
     label { font-weight: bold; }
     button { padding: 8px 16px; background: #4CAF50; color: white; border: none; cursor: pointer; }
     button:hover { background: #45a049; }
+    #status { color: #666; margin-top: 10px; }
   </style>
 </head>
 <body>
-  <h1>CWSI Calculator from Thermal TIFF Image</h1>
+  <h1>CWSI Calculator from TIF/TIFF Image</h1>
   
   <div class="container">
     <div class="controls">
       <div>
-        <label for="imageInput">Upload Thermal TIFF Image:</label>
+        <label for="imageInput">Upload Thermal TIF Image:</label>
         <input type="file" id="imageInput" accept=".tif,.tiff">
+        <div id="status">Library status: Checking...</div>
       </div>
       
       <div>
@@ -51,7 +53,7 @@
         <span>%</span>
       </div>
       
-      <button id="processButton">Process Image</button>
+      <button id="processButton" disabled>Process Image</button>
     </div>
     
     <div class="canvas-container">
@@ -82,6 +84,24 @@
     const originalCanvas = document.getElementById('originalCanvas');
     const cwsiCanvas = document.getElementById('cwsiCanvas');
     const resultsDiv = document.getElementById('results');
+    const statusDiv = document.getElementById('status');
+    
+    // Check if Tiff library is available
+    window.onload = function() {
+      setTimeout(function() {
+        if (typeof Tiff === 'undefined') {
+          statusDiv.innerHTML = 'Library status: <span style="color: red">Not loaded</span>';
+          resultsDiv.innerHTML = `
+            <p style="color: red">Error: TIFF.js library not loaded properly.</p>
+            <p>Please ensure you have internet connection to load the library from CDN.</p>
+          `;
+        } else {
+          statusDiv.innerHTML = 'Library status: <span style="color: green">Loaded successfully</span>';
+          resultsDiv.innerHTML = `<p>Ready to process TIF images. Please upload a thermal image.</p>`;
+          processButton.disabled = false;
+        }
+      }, 1000); // Give the library a moment to load
+    };
     
     // Event listeners
     imageInput.addEventListener('change', loadImage);
@@ -95,20 +115,38 @@
       const file = event.target.files[0];
       if (!file) return;
       
+      // Check file extension
+      const fileName = file.name.toLowerCase();
+      if (!fileName.endsWith('.tif') && !fileName.endsWith('.tiff')) {
+        resultsDiv.innerHTML = `<p style="color: red">Please select a TIF or TIFF file.</p>`;
+        return;
+      }
+      
+      resultsDiv.innerHTML = `<p>Loading image, please wait...</p>`;
+      processButton.disabled = true;
+      
       const reader = new FileReader();
       reader.onload = function(e) {
         try {
-          tiffImage = new Tiff({buffer: e.target.result});
+          // Make sure Tiff is defined before using it
+          if (typeof Tiff === 'undefined') {
+            throw new Error("TIFF.js library not loaded properly. Please refresh the page.");
+          }
+          
+          // Convert the ArrayBuffer to a Uint8Array
+          const buffer = new Uint8Array(e.target.result);
+          tiffImage = new Tiff({buffer: buffer});
           imageWidth = tiffImage.width();
           imageHeight = tiffImage.height();
           
           // Display original image
           displayOriginalImage();
           
-          // Enable processing
+          resultsDiv.innerHTML = `<p>Image loaded successfully. Click "Process Image" to calculate CWSI.</p>`;
           processButton.disabled = false;
         } catch (error) {
-          resultsDiv.innerHTML = `<p style="color: red">Error loading TIFF: ${error.message}</p>`;
+          resultsDiv.innerHTML = `<p style="color: red">Error loading TIF: ${error.message}</p>`;
+          console.error("TIF loading error:", error);
         }
       };
       
@@ -120,11 +158,16 @@
     }
     
     function displayOriginalImage() {
-      const canvas = tiffImage.toCanvas();
-      originalCanvas.width = imageWidth;
-      originalCanvas.height = imageHeight;
-      const ctx = originalCanvas.getContext('2d');
-      ctx.drawImage(canvas, 0, 0);
+      try {
+        const canvas = tiffImage.toCanvas();
+        originalCanvas.width = imageWidth;
+        originalCanvas.height = imageHeight;
+        const ctx = originalCanvas.getContext('2d');
+        ctx.drawImage(canvas, 0, 0);
+      } catch (error) {
+        resultsDiv.innerHTML = `<p style="color: red">Error displaying image: ${error.message}</p>`;
+        console.error("Display error:", error);
+      }
     }
     
     function processImage() {
@@ -155,9 +198,10 @@
         }
         
         // Calculate Tnwl and Tdry from percentiles
-        temps.sort((a, b) => a - b);
-        const Tnwl = temps[Math.floor(temps.length * minPct)];
-        const Tdry = temps[Math.floor(temps.length * maxPct)];
+        const tempsCopy = [...temps]; // Create a copy to sort
+        tempsCopy.sort((a, b) => a - b);
+        const Tnwl = tempsCopy[Math.floor(tempsCopy.length * minPct)];
+        const Tdry = tempsCopy[Math.floor(tempsCopy.length * maxPct)];
         const tempRange = Tdry - Tnwl;
         
         if (tempRange <= 0) {
@@ -174,12 +218,16 @@
         let sumCWSI = 0;
         let minCWSI = 1;
         let maxCWSI = 0;
+        let cwsiValues = new Array(imageWidth * imageHeight);
         
         for (let i = 0, j = 0; i < data.length; i += 4, j++) {
           const gray = (data[i] + data[i+1] + data[i+2]) / 3;
           const temp = gray * scaleFactor + offset;
           let cwsi = (temp - Tnwl) / tempRange;
           cwsi = Math.max(0, Math.min(1, cwsi)); // Clamp between 0 and 1
+          
+          // Store CWSI value
+          cwsiValues[j] = cwsi;
           
           // Update statistics
           sumCWSI += cwsi;
@@ -216,19 +264,28 @@
         
         cwsiCtx.putImageData(cwsiData, 0, 0);
         
+        // Calculate standard deviation
+        const avgCWSI = sumCWSI / cwsiValues.length;
+        let sumSquaredDiff = 0;
+        for (let i = 0; i < cwsiValues.length; i++) {
+          sumSquaredDiff += Math.pow(cwsiValues[i] - avgCWSI, 2);
+        }
+        const stdDev = Math.sqrt(sumSquaredDiff / cwsiValues.length);
+        
         // Display results
-        const avgCWSI = sumCWSI / (imageWidth * imageHeight);
         resultsDiv.innerHTML = `
           <p><strong>Non-Water-Stressed Baseline (Tnwl):</strong> ${Tnwl.toFixed(2)}°C</p>
           <p><strong>Dry Reference (Tdry):</strong> ${Tdry.toFixed(2)}°C</p>
           <p><strong>Temperature Range:</strong> ${tempRange.toFixed(2)}°C</p>
           <p><strong>Average CWSI:</strong> ${avgCWSI.toFixed(3)}</p>
+          <p><strong>CWSI Standard Deviation:</strong> ${stdDev.toFixed(3)}</p>
           <p><strong>Min CWSI:</strong> ${minCWSI.toFixed(3)}</p>
           <p><strong>Max CWSI:</strong> ${maxCWSI.toFixed(3)}</p>
           <p>Color scale: Blue (0) → Green → Yellow → Red (1)</p>
         `;
       } catch (error) {
         resultsDiv.innerHTML = `<p style="color: red">Error processing image: ${error.message}</p>`;
+        console.error("Processing error:", error);
       }
     }
   </script>
