@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CWSI Calculator from Image</title>
+</head>
+<body>
+  <h2>Upload Thermal Image</h2>
+  <input type="file" id="imageInput">
+  <canvas id="canvas" style="display:none;"></canvas>
+  <script>
+    document.getElementById("imageInput").addEventListener("change", function (event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.getElementById("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, img.width, img.height);
+        const data = imageData.data;
+
+        let temps = [];
+
+        // Collect grayscale values (assuming thermal grayscale image)
+        for (let i = 0; i < data.length; i += 4) {
+          const gray = data[i]; // R=G=B=gray
+          const temp = gray * 0.1; // Example conversion: 1 unit = 0.1 °C
+          temps.push(temp);
+        }
+
+        // Estimate Tdry and Tnwl
+        temps.sort((a, b) => a - b);
+        const Tnwl = temps[Math.floor(temps.length * 0.02)];
+        const Tdry = temps[Math.floor(temps.length * 0.98)];
+
+        // Calculate CWSI for each pixel
+        for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+          const Tc = temps[j];
+          let cwsi = (Tc - Tnwl) / (Tdry - Tnwl);
+          cwsi = Math.max(0, Math.min(1, cwsi)); // clamp between 0 and 1
+
+          // Map CWSI to color (hot colormap style)
+          const color = Math.floor(255 * cwsi);
+          data[i] = color;     // R
+          data[i + 1] = 0;     // G
+          data[i + 2] = 255 - color; // B
+        }
+
+        // Draw result
+        ctx.putImageData(imageData, 0, 0);
+        canvas.style.display = "block";
+        document.body.appendChild(canvas);
+      };
+
+      img.src = URL.createObjectURL(file);
+    });
+  </script>
+</body>
+</html>
