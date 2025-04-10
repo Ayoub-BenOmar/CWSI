@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>CWSI Calculator from Image</title>
+  <title>CWSI Calculator from TIFF Image</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tiff.js/2.0.0/tiff.min.js"></script>
 </head>
 <body>
   <h2>Upload Thermal Image</h2>
@@ -13,16 +14,19 @@
       const file = event.target.files[0];
       if (!file) return;
 
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.getElementById("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, img.width, img.height);
-        const data = imageData.data;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const tiff = new Tiff({buffer: e.target.result});
+        const image = tiff.toCanvas(); // Convert TIFF to canvas directly
 
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        ctx.drawImage(image, 0, 0);
+
+        const imageData = ctx.getImageData(0, 0, image.width, image.height);
+        const data = imageData.data;
         let temps = [];
 
         // Collect grayscale values (assuming thermal grayscale image)
@@ -55,8 +59,8 @@
         canvas.style.display = "block";
         document.body.appendChild(canvas);
       };
-
-      img.src = URL.createObjectURL(file);
+      
+      reader.readAsArrayBuffer(file);
     });
   </script>
 </body>
